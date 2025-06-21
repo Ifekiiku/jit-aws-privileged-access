@@ -1,0 +1,1 @@
+# DynamoDB table schema for JITAccessRequests

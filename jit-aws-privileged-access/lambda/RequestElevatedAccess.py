@@ -1,0 +1,1 @@
+# Lambda handler for initiating JIT access request

@@ -1,0 +1,1 @@
+# Lambda handler for assuming the JIT role
