@@ -24,6 +24,6 @@
 
 ## NOTE
 # Replace the following in the 'Example test' code
-- <api-id>
-- <your-api-key>
-- <account-id>
+- api-id
+- your-api-key
+- account-id
