@@ -1,1 +1,53 @@
-{ /* Step Function definition JSON */ }
+{
+  "Comment": "JIT Access Approval Workflow",
+  "StartAt": "SimulateApproval",
+  "States": {
+    "SimulateApproval": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.simulateApproval",
+          "BooleanEquals": true,
+          "Next": "AssumeJITRole"
+        }
+      ],
+      "Default": "Denied"
+    },
+    "AssumeJITRole": {
+      "Type": "Task",
+      "Resource": "INPUT_THE_ARN_OF_YOUR_AssumeJITRoleFunction",
+      "InputPath": "$",
+      "ResultPath": "$.credentials",
+      "Next": "Approved"
+    },
+    "Approved": {
+      "Type": "Task",
+      "Resource": "INPUT_THE_ARN_OF_YOUR_UpdateAccessStatus",
+      "Parameters": {
+        "requestId.$": "$.requestId",
+        "status": "APPROVED"
+      },
+      "ResultPath": "$.updateStatus",
+      "Next": "ReturnCredentials"
+    },
+    "ReturnCredentials": {
+      "Type": "Pass",
+      "Parameters": {
+        "AccessKeyId.$": "$.credentials.Credentials.AccessKeyId",
+        "SecretAccessKey.$": "$.credentials.Credentials.SecretAccessKey",
+        "SessionToken.$": "$.credentials.Credentials.SessionToken",
+        "Expiration.$": "$.credentials.Credentials.Expiration"
+      },
+      "End": true
+    },
+    "Denied": {
+      "Type": "Task",
+      "Resource": "INPUT_THE_ARN_OF_YOUR_UpdateAccessStatus",
+      "Parameters": {
+        "requestId.$": "$.requestId",
+        "status": "DENIED"
+      },
+      "End": true
+    }
+  }
+}

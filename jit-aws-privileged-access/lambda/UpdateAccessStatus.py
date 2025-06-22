@@ -1,1 +1,0 @@
-# Lambda handler for updating request status in DynamoDB

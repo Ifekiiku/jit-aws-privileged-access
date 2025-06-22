@@ -6,7 +6,7 @@ from datetime import datetime
 stepfunctions = boto3.client('stepfunctions')
 dynamodb = boto3.resource('dynamodb')
 
-STATE_MACHINE_ARN = "arn:aws:states:us-east-1:701785833185:stateMachine:JITAccessApprovalWorkflow"
+STATE_MACHINE_ARN = "YOUR_STATE_MACHINE_ARN"
 TABLE_NAME = "JITAccessRequests"
 
 def lambda_handler(event, context):
