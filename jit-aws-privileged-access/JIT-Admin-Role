@@ -2,7 +2,7 @@
 
 - Name: JIT-ElevatedAdminRole
 - Type: IAM Role
-- Trusted entity: Another AWS principal (IAM roles or users)
+- Trusted entity type: AWS Account
 
 ## Trust Policy
     {
