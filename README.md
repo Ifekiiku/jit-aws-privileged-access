@@ -4,6 +4,8 @@ This project eliminates standing admin privileges using temporary role assumptio
 
 ## 🧱 Architecture Overview
 
+![Architecture Diagram](jit-aws-privileged-access/architecture-diagram/jit-architecture-diagram.drawio.png)
+
 - IAM Identity Center for user identity
 - Lambda for request processing and role assumption
 - Step Functions for approval flow
