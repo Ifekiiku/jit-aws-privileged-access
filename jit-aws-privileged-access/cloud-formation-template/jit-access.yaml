@@ -1,0 +1,412 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Just-In-Time Privileged Access Workflow on AWS
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: JITAccess
+    Description: Prefix for all named resources
+  AdminEmail:
+    Type: String
+    Default: admin@example.com
+  DurationSeconds:
+    Type: Number
+    Default: 900
+
+
+Resources:
+
+  JITAccessTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}Requests"
+      AttributeDefinitions:
+        - AttributeName: requestId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: requestId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      BillingMode: PAY_PER_REQUEST
+
+  RequestAccessFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-RequestLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RequestAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - states:StartExecution
+                Resource: "*"
+              - Effect: Allow
+                Action: logs:*
+                Resource: "*"
+
+  AssumeRoleFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-AssumeLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AssumeRolePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: "*"
+              - Effect: Allow
+                Action: logs:*
+                Resource: "*"
+
+  UpdateStatusFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-UpdateLambdaRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: UpdateStatusPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: "*"
+              - Effect: Allow
+                Action: logs:*
+                Resource: "*"
+
+  RequestAccessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-RequestAccess"
+      Handler: index.lambda_handler
+      Role: !GetAtt RequestAccessFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import uuid
+          import os
+          from datetime import datetime
+
+          stepfunctions = boto3.client('stepfunctions')
+          dynamodb = boto3.resource('dynamodb')
+
+          STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN")
+          TABLE_NAME = os.environ.get("TABLE_NAME")
+
+          def lambda_handler(event, context):
+              print("Received event:", json.dumps(event))  # Debugging
+
+              # Handle both API Gateway and direct invocation
+              if "body" in event:
+                  try:
+                      body = json.loads(event["body"]) if isinstance(event["body"], str) else event["body"]
+                  except json.JSONDecodeError:
+                      return {
+                          "statusCode": 400,
+                          "body": json.dumps({"message": "Invalid JSON body"})
+                      }
+              else:
+                  body = event  # Direct invocation (e.g., from Lambda test)
+
+              try:
+                  request_id = str(uuid.uuid4())
+                  requester = body["requester"]
+                  role = body["role"]
+                  role_arn = body["roleArn"]
+                  duration = int(body["duration"])
+                  simulate_approval = body.get("simulateApproval", False)
+              except KeyError as e:
+                  return {
+                      "statusCode": 400,
+                      "body": json.dumps({"message": f"Missing required field: {str(e)}"})
+                  }
+
+              # Save request to DynamoDB
+              table = dynamodb.Table(TABLE_NAME)
+              table.put_item(
+                  Item={
+                      "requestId": request_id,
+                      "requester": requester,
+                      "role": role,
+                      "status": "PENDING",
+                      "requestedAt": datetime.utcnow().isoformat(),
+                      "duration": duration
+                  }
+              )
+
+              # Start Step Function execution asynchronously
+              try:
+                  response = stepfunctions.start_execution(
+                      stateMachineArn=STATE_MACHINE_ARN,
+                      input=json.dumps({
+                          "requestId": request_id,
+                          "requester": requester,
+                          "role": role,
+                          "roleArn": role_arn,
+                          "duration": duration,
+                          "simulateApproval": simulate_approval
+                      })
+                  )
+                  print("Step Function started:", response)
+              except Exception as e:
+                  return {
+                      "statusCode": 500,
+                      "body": json.dumps({
+                          "message": "Failed to start Step Function execution",
+                          "error": str(e)
+                      })
+                  }
+
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps({
+                      "message": "Access request submitted",
+                      "requestId": request_id,
+                      "executionArn": response["executionArn"]
+                  })
+              }
+
+      Runtime: python3.12
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref JITAccessTable
+          STATE_MACHINE_ARN: !Ref JITApprovalWorkflow
+
+  AssumeJITRoleFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-AssumeJITRole"
+      Handler: index.lambda_handler
+      Role: !GetAtt AssumeRoleFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+
+          sts = boto3.client('sts')
+
+          def lambda_handler(event, context):
+              role_arn = event.get('roleArn')
+              duration = int(event.get('duration', 3600))
+              
+              try:
+                  response = sts.assume_role(
+                      RoleArn=role_arn,
+                      RoleSessionName="JITSession",
+                      DurationSeconds=duration
+                  )
+
+                  creds = response['Credentials']
+                  creds['Expiration'] = creds['Expiration'].isoformat()
+
+
+                  return {
+                      "credentials": {
+                          "Credentials": {
+                              "AccessKeyId": creds['AccessKeyId'],
+                              "SecretAccessKey": creds['SecretAccessKey'],
+                              "SessionToken": creds['SessionToken'],
+                              "Expiration": creds['Expiration']
+                          }
+                      }
+                  }
+    
+
+              except Exception as e:
+                  return {
+                      'error': str(e),
+                      'status': 'FAILED'
+                  }
+
+      Runtime: python3.12
+
+  UpdateAccessStatusFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-UpdateAccessStatus"
+      Handler: index.lambda_handler
+      Role: !GetAtt UpdateStatusFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+          def lambda_handler(event, context):
+              request_id = event.get('requestId')
+              status = event.get('status', 'UNKNOWN')
+
+              if not request_id:
+                  return {'error': 'Missing requestId'}
+
+              table.update_item(
+                  Key={'requestId': request_id},
+                  UpdateExpression='SET #s = :val',
+                  ExpressionAttributeNames={'#s': 'status'},
+                  ExpressionAttributeValues={':val': status}
+              )
+
+              return {'message': f'Request {request_id} updated to {status}'}
+
+      Runtime: python3.12
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref JITAccessTable
+
+  JITApprovalWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${ProjectName}ApprovalWorkflow"
+      RoleArn: !GetAtt StepFunctionExecutionRole.Arn
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "JIT Access Approval Workflow",
+            "StartAt": "SimulateApproval",
+            "States": {
+              "SimulateApproval": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.simulateApproval",
+                    "BooleanEquals": true,
+                    "Next": "AssumeJITRole"
+                  }
+                ],
+                "Default": "Denied"
+              },
+              "AssumeJITRole": {
+                "Type": "Task",
+                "Resource": "${AssumeJITRoleFunction.Arn}",
+                "ResultPath": "$.credentials",
+                "Next": "Approved"
+              },
+              "Approved": {
+                "Type": "Task",
+                "Resource": "${UpdateAccessStatusFunction.Arn}",
+                "Parameters": {
+                  "requestId.$": "$.requestId",
+                  "status": "APPROVED"
+                },
+                "End": true
+              },
+              "Denied": {
+                "Type": "Task",
+                "Resource": "${UpdateAccessStatusFunction.Arn}",
+                "Parameters": {
+                  "requestId.$": "$.requestId",
+                  "status": "DENIED"
+                },
+                "End": true
+              }
+            }
+          }
+
+  StepFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-StepFunctionExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionLambdaInvoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: "*"
+
+  JITApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${ProjectName}-Api"
+      Description: API to trigger JIT Access Request
+
+  JITApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref JITApiGateway
+      ParentId: !GetAtt JITApiGateway.RootResourceId
+      PathPart: request-access
+
+  JITApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref JITApiGateway
+      ResourceId: !Ref JITApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: 
+          Fn::Sub: 
+            - arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - Region: !Ref "AWS::Region"
+              LambdaArn: !GetAtt RequestAccessFunction.Arn
+
+  RequestAccessInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RequestAccessFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: 
+        Fn::Sub: "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${JITApiGateway}/*/POST/request-access"
+
+  JITApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: JITApiMethod
+    Properties:
+      RestApiId: !Ref JITApiGateway
+      StageName: prod
+
+
+Outputs:
+  ApiLambdaName:
+    Value: !Ref RequestAccessFunction
+    Description: Name of the API Lambda Function
+  DynamoTableName:
+    Value: !Ref JITAccessTable
+  StepFunctionName:
+    Value: !Ref JITApprovalWorkflow
+  ApiEndpoint:
+    Value: !Sub "https://${JITApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/request-access"
+    Description: Invoke URL for the JIT Access API
