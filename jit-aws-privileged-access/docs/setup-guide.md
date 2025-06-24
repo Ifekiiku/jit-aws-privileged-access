@@ -25,23 +25,6 @@ This project demonstrates a full-stack, real-world implementation of a JIT (Just
 
 ---
 
-## 📁 Project Structure
-
-```
-JIT-Access-AWS/
-├── README.md
-├── lambda/
-│   ├── RequestElevatedAccess.py
-│   ├── AssumeJITRoleFunction.py
-│   └── UpdateAccessStatus.py
-├── step-function/
-│   └── state-machine.json
-└── assets/
-    └── architecture-diagram.png
-```
-
----
-
 ## ⚙️ Setup Instructions
 
 ### 1. Create the IAM Elevated Role
@@ -76,9 +59,9 @@ JIT-Access-AWS/
 
 ### 3. Create Lambda Functions
 
-- **request\_access.py** (handles API calls and starts Step Function)
-- **assume\_role.py** (calls `sts:assumeRole` and returns temporary credentials)
-- **update\_status.py** (updates request status in DynamoDB)
+- **RequestElevatedAccess.py** (handles API calls and starts Step Function)
+- **AssumeJITRole.py** (calls `sts:assumeRole` and returns temporary credentials)
+- **UpdateAccessStatus.py** (updates request status in DynamoDB)
 
 Each function should have its own IAM role with scoped permissions:
 
@@ -157,7 +140,7 @@ This project gives a real-world JIT access implementation that’s:
 - Secure
 - Extendable (approval UI, email alerts, Slack notifications)
 
-You can rebuild this from the AWS Console or automate it using Infrastructure as Code (e.g., Terraform/CDK).
+You can rebuild this from the AWS Console or automate it using Infrastructure as Code
 
 ---
 

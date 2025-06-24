@@ -36,14 +36,18 @@ This CloudFormation template is designed to support:
      --stack-name JITAccessStack \
      --capabilities CAPABILITY_NAMED_IAM
 
-## After Deployment
-- Copy the ApiEndpoint output — this is the REST endpoint to send access requests.
-- Send a POST request with the following JSON body:
-    {
-    "requester": "john.doe@example.com",
-    "role": "AdminAccess",
-    "roleArn": "arn:aws:iam::123456789012:role/AdminAccess",
-    "duration": 900,
-    "simulateApproval": true
-    }
+## Testing API Gateway
+- Once deployed, you can test it from Git Bash or Postman using the URL:
+    ```bash
+    curl -X POST https://API_ID.execute-api.REGION.amazonaws.com/prod/request-access \
+        -H "Content-Type: application/json" \
+        -d '{
+          "requester": "admin@ifekiiku.com",
+          "role": "JIT-ElevatedAdminRole",
+          "roleArn": "arn:aws:iam::ACCOUNT_ID:role/JIT-ElevatedAdminRole",
+          "duration": 900,
+          "simulateApproval": true
+        }'
+    ```
+
 - Watch the Step Function execution to see approval flow in action.
